@@ -1,16 +1,20 @@
-# SAP-RPA Material-Automation
+# SAP Master Data Quality Rules
 
-Automatisierte Anlage von Artikel-Farb-Kombinationen (Fertigware + Farbzwirn)
-nach realem Vorbild aus der SAP-Stammdatenpflege eines Fertigungsunternehmens
-(Textil/Garn). UiPath übernimmt die UI-Automatisierung, Python die Validierung
-und Orchestrierung – entwickelt gegen ein selbst gebautes Mock-System, da kein
-privater SAP-Zugriff besteht.
+Regelbasierte Qualitätssicherung bei der Anlage von Artikel-Farb-Kombinationen
+(Fertigware + Farbzwirn) in SAP – nach realem Vorbild aus der Stammdatenpflege
+eines Fertigungsunternehmens (Textil/Garn). Kern ist eine mehrstufige
+Entscheidungslogik (A1/A2/B1/B2), die drei kostspielige Fehlerquellen
+maschinell ausschließt, statt sie der Aufmerksamkeit der Sachbearbeiter zu
+überlassen. Python entscheidet und validiert, UiPath führt aus – entwickelt
+gegen ein selbst gebautes Mock-System, da kein privater SAP-Zugriff besteht.
 
 > **Status: in aktiver Entwicklung.** Das Mock-System (5 Masken + zentrale
 > Statusdatei) ist fertig und manuell durchspielbar – alle vier
 > Entscheidungspfade wurden Ende-zu-Ende von Hand durchgespielt, bevor eine
-> Zeile Bot-Code entsteht. Python-Schicht, UiPath-Workflows und Watchdog
-> folgen – siehe [Roadmap](#roadmap).
+> Zeile Automatisierungscode entstand. Der Python-Entscheidungskern ist
+> lauffähig: Er liest die CDE-Liste, entscheidet den Fall (A1/A2/B1/B2) und
+> erzeugt den Arbeitsauftrag. Fehlerbehandlung, UiPath-Workflows und
+> Monitoring folgen – siehe [Roadmap](#roadmap).
 
 ## Begriffe (wichtig fürs Verständnis)
 
@@ -64,6 +68,12 @@ Morgen warten.
    erbt der neue DT den Färbeplan von Schwarz – und landet im
    Schwarz-Färbekessel, der zwischen Chargen nicht gereinigt wird. Aus dem
    soll Grün werden. Das Ergebnis ist Ausschuss.
+   Im automatisierten Prozess ist diese Auswahl-Falle strukturell beseitigt:
+   Die Vorlage wird nicht von Hand gewählt, sondern nach fester Regel aus
+   dem Artikel abgeleitet und in den Arbeitsauftrag geschrieben – der Ort,
+   an dem der Fehler entsteht, existiert im Bot-Weg nicht. Eine zusätzliche
+   Typ-Validierung (Endziffer der Vorlage gegen den Ziel-Färbetyp) ist als
+   Ausbaustufe geplant (siehe [Roadmap](#roadmap)).
 3. **Gruppenweites Sperren.** Die Sperr-Transaktion arbeitet je
    Rezeptgruppe + Farbe und trifft damit *alle Materialien der Gruppe in
    dieser Farbe* – auch bereits freigegebene. Wer vor dem Sperren nicht
@@ -115,7 +125,7 @@ nicht beliefert werden.
 flowchart TD
     R["Report: Rezeptgruppe + Farbe (F8)<br/>DT-Zeilen ignorieren, nur FG zählt"] --> D1{FG-Treffer<br/>vorhanden?}
     D1 -- "nein → A1" --> A["Fälle A1 / A2 / B2: volle Kette<br/>Anlage beide Werke → beide sperren →<br/>PPAP-Werk entsperren → Post-Check"]
-    D1 -- ja --> D2{Treffer im eigenen<br/>Werkskreis?}
+    D1 -- ja --> D2{Mindestens ein Treffer<br/>im eigenen Kreis?}
     D2 -- "nein → A2" --> A
     D2 -- ja --> D3{Beide Werke<br/>offen?}
     D3 -- "ja → B1" --> B1["Fall B1: nur Anlage<br/>KEIN Sperren – Kunde hat komplett<br/>freigegeben, Serienfertigung läuft"]
@@ -179,7 +189,8 @@ A1, nur der Weg zur Entscheidung unterscheidet sich.
 2. Rezeptgruppen-Lookup: Gruppenbereich 1–9999 (= alle Gruppen), Artikel
    eintragen, F8 → genau eine Gruppennummer
 3. Report-Check: Gruppe + Farbe, beide Anzeige-Häkchen, F8 → Entscheidung
-   A1/A2/B1/B2
+   A1/A2/B1/B2 (der Sperrstatus kommt im Mock direkt aus dem Report; real
+   wird er separat in der MARC nachgeschlagen – siehe Vereinfachungen)
 4. Massenanlage im Standardwerk (Variante 1), danach im PPAP-Werk
    (Variante 2) – Vorlage laden **mit Enter**, Ergebnis-Grid je Sicht
    auswerten
@@ -204,16 +215,16 @@ Python-Schicht                         Validierung, Konsistenz-Checks,
 UiPath-Workflows  <---->  Mock-System  5 Masken, die die realen
         |                              SAP-Transaktionen nachbilden
         v
-Watchdog (Python)                      Überwachung, Fehler-Log,
+Monitoring (Python)                    Überwachung, Fehler-Log,
                                        Alarmierung per Outlook
 ```
 
 | Baustein | Rolle | Status |
 |---|---|---|
 | `mock_system/` | Nachbildung der fünf SAP-Transaktionen + zentrale Statusdatei (JSON) als "Datenbank" | fertig |
-| Python-Validierung | CDE-Zeilen prüfen, Entscheidungsbaum, Transaktionsliste für UiPath | in Arbeit |
+| Python-Validierung | CDE-Zeilen prüfen, Entscheidungsbaum, Transaktionsliste für UiPath | Kern lauffähig – Ausbau (Fehlerbehandlung) in Arbeit |
 | UiPath-Prozesse | REFramework – UiPaths Standard-Bauplan: Abarbeitung je Transaktion mit getrenntem Fehlerkorb, ein Fehler bei Position 47 stoppt nicht Position 48 | geplant |
-| Watchdog | Timeout-Erkennung, Teilausfall-Szenarien, Outlook-Alarm | geplant |
+| Monitoring | Timeout-Erkennung, Teilausfall-Szenarien, Outlook-Alarm | geplant |
 
 ## Das Mock-System
 
@@ -247,17 +258,17 @@ den gemeinsamen `state_manager`).
    `cmd` eintippen, Enter – es öffnet sich ein Terminal, das bereits im
    richtigen Ordner steht.
 3. Eine Maske starten:
-   ```
+```
    py mock_cde.py
-   ```
+```
 4. Mehrere Masken parallel (empfohlen für den Ketten-Durchlauf):
-   ```
+```
    start py mock_cde.py
    start py mock_rezgrp.py
    start py mock_report.py
    start py mock_massenanlage.py
    start py mock_sperr.py
-   ```
+```
    `start` gibt das Terminal sofort wieder frei; jede Maske läuft in
    ihrem eigenen Fenster.
 
@@ -281,6 +292,12 @@ Vier vorbereitete CDEs führen je einen Pfad des Entscheidungsbaums vor
 | CDE-90223 | 0500Z | Treffer nur in Werken 2010;2090 (fremder Kreis) | **A2** | volle Kette |
 | CDE-90211 | 0100Z | Geschwister 2345, Werke 1010;1090, **beide offen** | **B1** | nur Anlage, kein Sperren |
 | CDE-90214 | 0300Z | Geschwister 2345, **1010 gesperrt** (PPAP läuft, Version 2!) | **B2** | volle Kette |
+
+**Hinweis zu B2:** Die gruppenweite Sperre der vollen Kette trifft
+kurzzeitig auch das offene Werk des Geschwisters; der anschließende
+Entsperr-Schritt (PPAP öffnen) stellt es wieder her – der Endzustand des
+Geschwisters ist identisch mit vorher. Genau deshalb ist `mock_sperr`
+idempotent gebaut: Mehrfaches Sperren/Entsperren richtet keinen Schaden an.
 
 **Der komplette Durchlauf am Beispiel CDE-90218 (Fall A1):**
 
@@ -334,16 +351,19 @@ nachlesen, von welcher Vorlage tatsächlich kopiert wurde (auch in der
 
 ## Roadmap
 
-- [x] Mock-System: fünf Masken + zentrale Statusdatei
-- [x] Entscheidungslogik A1/A2/B1/B2 als Python-Prototyp verifiziert
-- [x] Alle vier Entscheidungspfade manuell Ende-zu-Ende durchgespielt
+- [x] Phase 1: Mock-System – fünf Masken + zentrale Statusdatei
+- [x] Phase 1: Entscheidungslogik A1/A2/B1/B2 als Python-Prototyp verifiziert
+- [x] Phase 1: Alle vier Entscheidungspfade manuell Ende-zu-Ende durchgespielt
 - [x] Phase 2 (Kern): Python liest die CDE-Liste, entscheidet den Fall
       und erzeugt den Arbeitsauftrag – lauffähig gegen die Statusdatei
 - [ ] Phase 2 (Ausbau): Fehlerbehandlung (Business/System Exception),
       Flaggen und error_log
+- [ ] Phase 2 (Ausbau): Vorlagen-Typ-Validierung – typkodierende Endziffer
+      der Vorlagen-Produkthierarchie gegen den Ziel-Färbetyp prüfen, bevor
+      der Arbeitsauftrag entsteht
 - [ ] Phase 3: UiPath-Workflows (REFramework, wiederverwendbare Bausteine
       je Maske, Business/System Exceptions)
-- [ ] Phase 4: Watchdog + Outlook-Alarmierung, Post-Check-Gate
+- [ ] Phase 4: Monitoring + Outlook-Alarmierung, Post-Check-Gate
 
 ## Transparenz
 
@@ -355,6 +375,7 @@ Prozessanalyse, Fachlogik und Entscheidungsdesign stammen aus der täglichen
 Arbeit mit dem realen Prozess – diesen Teil kann ich vollständig erklären
 und verteidigen. Das Mock-System als Testumgebung wurde KI-unterstützt
 gebaut: Es bildet die SAP-Oberflächen nach, damit die Automatisierung gegen
-ein realistisches Ziel entwickelt werden kann. Die kommenden Phasen
-(Python-Logik, UiPath-Workflows) entstehen schrittweise in eigener
-Umsetzung.
+ein realistisches Ziel entwickelt werden kann. Die Python-Entscheidungslogik
+ist bereits in eigener Umsetzung entstanden; die weiteren Phasen
+(Fehlerbehandlung, UiPath-Workflows, Monitoring) folgen schrittweise auf
+demselben Weg.
